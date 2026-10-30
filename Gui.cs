@@ -134,6 +134,24 @@ internal static class Theme
     }
 }
 
+// ------------------------------------------------------------------ 分组卡片
+
+/// <summary>设置行在分组卡片里的位置：决定圆角画在哪、接缝处画不画边。</summary>
+internal enum RowGroup
+{
+    /// <summary>独立一行，自带完整圆角边框。</summary>
+    Standalone = 0,
+
+    /// <summary>组内第一行：上圆角，无下边框。</summary>
+    Top = 1,
+
+    /// <summary>组内中间行：直角，只有左右两条边。</summary>
+    Middle = 2,
+
+    /// <summary>组内最后一行：下圆角，无上边框。</summary>
+    Bottom = 3
+}
+
 // ------------------------------------------------------------------ 绘制辅助
 
 internal static class Draw
@@ -182,6 +200,104 @@ internal static class Draw
         StrokeRound(g, r, 6, border);
     }
 
+    /// <summary>
+    /// 成组设置行的卡片：几行共用一个圆角外形，组内相邻行之间不画边框。
+    /// </summary>
+    public static void GroupCard(Graphics g, Rectangle r, Color fill, Color border, RowGroup group)
+    {
+        if (group == RowGroup.Standalone)
+        {
+            Card(g, r, fill, border);
+            return;
+        }
+
+        using (GraphicsPath fillPath = GroupFillPath(r, 6, group))
+        using (SolidBrush brush = new SolidBrush(fill))
+        {
+            g.FillPath(brush, fillPath);
+        }
+
+        using (GraphicsPath strokePath = GroupStrokePath(r, 6, group))
+        using (Pen pen = new Pen(border, 1f))
+        {
+            g.DrawPath(pen, strokePath);
+        }
+    }
+
+    /// <summary>成组卡片的填充轮廓。</summary>
+    private static GraphicsPath GroupFillPath(Rectangle r, int radius, RowGroup group)
+    {
+        GraphicsPath path = new GraphicsPath();
+        int d = radius * 2;
+
+        if (group == RowGroup.Middle)
+        {
+            path.AddRectangle(r);
+            return path;
+        }
+
+        if (group == RowGroup.Top)
+        {
+            // 上面两个角圆，下面两个角是直角
+            path.AddArc(r.X, r.Y, d, d, 180, 90);
+            path.AddArc(r.Right - d, r.Y, d, d, 270, 90);
+            Line(path, r.Right, r.Bottom, r.Left, r.Bottom);
+            path.CloseFigure();
+            return path;
+        }
+
+        // Bottom：上面两个角是直角，下面两个角圆
+        path.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
+        Line(path, r.Left, r.Y, r.Right, r.Y);
+        Line(path, r.Right, r.Y, r.Right, r.Bottom - radius);
+        path.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
+        path.CloseFigure();
+
+        return path;
+    }
+
+    /// <summary>成组卡片的边框轮廓：组内的接缝处不画线。</summary>
+    private static GraphicsPath GroupStrokePath(Rectangle r, int radius, RowGroup group)
+    {
+        GraphicsPath path = new GraphicsPath();
+        int d = radius * 2;
+
+        if (group == RowGroup.Middle)
+        {
+            path.StartFigure();
+            Line(path, r.Left, r.Y, r.Left, r.Bottom);
+            path.StartFigure();
+            Line(path, r.Right, r.Y, r.Right, r.Bottom);
+            return path;
+        }
+
+        if (group == RowGroup.Top)
+        {
+            path.AddArc(r.X, r.Y, d, d, 180, 90);
+            path.AddArc(r.Right - d, r.Y, d, d, 270, 90);
+            Line(path, r.Right, r.Y + radius, r.Right, r.Bottom);
+            path.StartFigure();
+            Line(path, r.Left, r.Bottom, r.Left, r.Y + radius);
+            return path;
+        }
+
+        // Bottom
+        path.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
+        Line(path, r.Left, r.Bottom - radius, r.Left, r.Y);
+        path.StartFigure();
+        Line(path, r.Right, r.Y, r.Right, r.Bottom - radius);
+        path.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
+        Line(path, r.Right - radius, r.Bottom, r.X + radius, r.Bottom);
+
+        return path;
+    }
+
+    /// <summary>连一条线。这个 .NET 版本的 GraphicsPath 只有 PointF 版 AddLine。</summary>
+    private static void Line(GraphicsPath path, float x1, float y1, float x2, float y2)
+    {
+        path.AddLine(new PointF(x1, y1), new PointF(x2, y2));
+    }
+
     public static void Dot(Graphics g, Rectangle r, Color color)
     {
         using (SolidBrush b = new SolidBrush(color))
@@ -221,6 +337,9 @@ internal sealed class SettingRow : Control
     public bool ToggleOn;
     public bool ShowChevron;
     public bool EnabledRow = true;
+
+    /// <summary>在分组卡片里的位置。</summary>
+    public RowGroup Group = RowGroup.Standalone;
 
     /// <summary>行内次级动作（画在副标题右侧，例如「同步到全部」）。为空则不显示。</summary>
     public string LinkText = "";
@@ -273,7 +392,16 @@ internal sealed class SettingRow : Control
         if (_pressed && EnabledRow) fill = Theme.CardPressed;
         if (!EnabledRow) fill = Theme.Dark ? Color.FromArgb(0x26, 0x26, 0x26) : Color.FromArgb(0xF7, 0xF7, 0xF7);
 
-        Draw.Card(g, r, fill, Theme.Border);
+        Draw.GroupCard(g, r, fill, Theme.Border, Group);
+
+        // 组内第一行与第二行之间的细分隔线
+        if (Group == RowGroup.Top)
+        {
+            using (Pen pen = new Pen(Theme.Border, 1f))
+            {
+                g.DrawLine(pen, 20, r.Bottom, r.Right - 20, r.Bottom);
+            }
+        }
 
         Color titleColor = EnabledRow ? Theme.Text : Theme.TextTertiary;
 
@@ -740,7 +868,7 @@ internal sealed class MainForm : Form
     private const int RowX = 26;
     private const int RowW = 508;
 
-    private readonly Panel _content = new Panel();
+    private readonly FlowLayoutPanel _flow = new FlowLayoutPanel();
 
     private readonly SettingRow _lockRow = new SettingRow();
     private readonly SettingRow _expandRow = new SettingRow();
@@ -748,6 +876,8 @@ internal sealed class MainForm : Form
     private readonly SettingRow _clipRow = new SettingRow();
     private readonly SettingRow _brightRow = new SettingRow();
     private readonly SettingRow _hibernateRow = new SettingRow();
+    private readonly SettingRow _cmdRow = new SettingRow();
+    private readonly SettingRow _psRow = new SettingRow();
     private readonly SettingRow _detailRow = new SettingRow();
 
     private bool _busy;
@@ -769,6 +899,12 @@ internal sealed class MainForm : Form
 
     private bool _hibernateEnabled;
 
+    private bool _cmdOn;
+    private bool _cmdAllLocations = true;
+
+    private bool _psOn;
+    private bool _psAllLocations = true;
+
     public MainForm()
     {
         this.Text = App.Title;
@@ -781,11 +917,15 @@ internal sealed class MainForm : Form
         this.AutoScaleDimensions = new SizeF(96F, 96F);
         this.ShowIcon = false;
 
-        _content.Dock = DockStyle.Fill;
-        _content.AutoScroll = true;
-        _content.AutoScrollMinSize = new Size(560, 686);
-        _content.BackColor = Theme.Page;
-        Controls.Add(_content);
+        _flow.Dock = DockStyle.Fill;
+        _flow.FlowDirection = FlowDirection.TopDown;
+        _flow.WrapContents = false;
+        _flow.AutoScroll = true;
+        _flow.AutoScrollMinSize = new Size(0, 882);
+        _flow.HorizontalScroll.Enabled = false;
+        _flow.BackColor = Theme.Page;
+        _flow.Padding = new Padding(RowX, 14, RowX, 12);
+        Controls.Add(_flow);
 
         BuildContent();
         FitToScreen();
@@ -802,7 +942,7 @@ internal sealed class MainForm : Form
 
         if (maxHeight < 420) maxHeight = 420;
 
-        int desired = 700;
+        int desired = 892;
 
         ClientSize = new Size(560, Math.Min(desired, maxHeight));
     }
@@ -814,104 +954,120 @@ internal sealed class MainForm : Form
         title.Font = Theme.Title;
         title.ForeColor = Theme.Text;
         title.AutoSize = false;
-        title.SetBounds(RowX, 14, 480, 34);
-        _content.Controls.Add(title);
+        AddFlow(title, 480, 34, 0);
 
         Label sub = new Label();
-        sub.Text = "导航窗格 · 排序 · 电源";
+        sub.Text = "导航窗格 · 排序 · 电源 · 右键菜单";
         sub.Font = Theme.Subtitle;
         sub.ForeColor = Theme.TextSecondary;
         sub.AutoSize = false;
-        sub.SetBounds(RowX + 2, 48, 480, 20);
-        _content.Controls.Add(sub);
+        AddFlow(sub, 480, 20, 12, 2);
 
-        AddSection("导航窗格", 80);
+        AddSection("导航窗格", 4);
 
         // 状态直接并进这一行：副标题即状态，锁定/未锁定用颜色区分
         _lockRow.TitleText = "锁定导航窗格";
         _lockRow.SubText = "冻结当前的展开与折叠状态";
         _lockRow.ShowToggle = true;
-        _lockRow.SetBounds(RowX, 102, RowW, 68);
         _lockRow.Activate += delegate { OnToggleLock(); };
-        _content.Controls.Add(_lockRow);
+        AddFlow(_lockRow, RowW, 68, 12);
 
         _expandRow.TitleText = "展开到打开的文件夹";
         _expandRow.SubText = "自动展开到当前打开的位置";
         _expandRow.ShowToggle = true;
-        _expandRow.SetBounds(RowX, 182, RowW, RowHeight);
         _expandRow.Activate += delegate { OnToggleExpand(); };
-        _content.Controls.Add(_expandRow);
+        AddFlow(_expandRow, RowW, RowHeight, 18);
 
-        AddSection("系统设置", 256);
+        AddSection("系统设置", 4);
 
         _sortRow.TitleText = "数字排序（自然排序）";
         _sortRow.SubText = "按 1、2、10 排序";
         _sortRow.ShowToggle = true;
-        _sortRow.SetBounds(RowX, 278, RowW, RowHeight);
         _sortRow.Activate += delegate { OnToggleSort(); };
-        _content.Controls.Add(_sortRow);
+        AddFlow(_sortRow, RowW, RowHeight, 6);
 
         _clipRow.TitleText = "剪贴板历史";
         _clipRow.SubText = "Win+V 查看复制过的内容";
         _clipRow.ShowToggle = true;
-        _clipRow.SetBounds(RowX, 340, RowW, 68);
         _clipRow.Activate += delegate { OnToggleClip(); };
         _clipRow.LinkActivated += delegate { OnRepairClipService(); };
-        _content.Controls.Add(_clipRow);
+        AddFlow(_clipRow, RowW, 68, 12);
 
         _brightRow.TitleText = "关闭自动亮度";
         _brightRow.SubText = "关闭随环境光自动调整亮度";
         _brightRow.ShowToggle = true;
-        _brightRow.SetBounds(RowX, 420, RowW, 68);
         _brightRow.Activate += delegate { OnToggleBrightness(); };
         _brightRow.LinkActivated += delegate { OnSyncBrightness(); };
-        _content.Controls.Add(_brightRow);
+        AddFlow(_brightRow, RowW, 68, 12);
 
         _hibernateRow.TitleText = "关闭休眠";
         _hibernateRow.SubText = "同时关闭「快速启动」";
         _hibernateRow.ShowToggle = true;
-        _hibernateRow.SetBounds(RowX, 500, RowW, RowHeight);
         _hibernateRow.Activate += delegate { OnToggleHibernate(); };
-        _content.Controls.Add(_hibernateRow);
+        AddFlow(_hibernateRow, RowW, RowHeight, 18);
+
+        AddSection("右键菜单", 4);
+
+        _cmdRow.TitleText = "在此处打开CMD窗口";
+        _cmdRow.SubText = "点击开启，在文件夹空白处右键打开 CMD";
+        _cmdRow.ShowToggle = true;
+        _cmdRow.Group = RowGroup.Top;
+        _cmdRow.Activate += delegate { OnToggleCmd(); };
+        _cmdRow.LinkActivated += delegate { OnToggleCmdScope(); };
+        AddFlow(_cmdRow, RowW, 68, 0);
+
+        _psRow.TitleText = "在此处打开PowerShell窗口";
+        _psRow.SubText = "点击开启，在文件夹空白处右键打开 PowerShell";
+        _psRow.ShowToggle = true;
+        _psRow.Group = RowGroup.Bottom;
+        _psRow.Activate += delegate { OnTogglePowerShell(); };
+        _psRow.LinkActivated += delegate { OnTogglePowerShellScope(); };
+        AddFlow(_psRow, RowW, 68, 6);
 
         _detailRow.TitleText = "查看详细信息";
         _detailRow.SubText = "权限、注册表值、电源状态、备份与日志";
         _detailRow.ShowChevron = true;
-        _detailRow.SetBounds(RowX, 562, RowW, RowHeight);
         _detailRow.Activate += delegate { ShowDetails(); };
-        _content.Controls.Add(_detailRow);
+        AddFlow(_detailRow, RowW, RowHeight, 20);
 
         Panel line = new Panel();
         line.BackColor = Theme.Border;
-        line.SetBounds(RowX, 638, RowW, 1);
-        _content.Controls.Add(line);
+        AddFlow(line, RowW, 1, 7);
 
         Label data = new Label();
         data.Text = "数据目录  " + NavPaneCore.DataDir;
         data.Font = Theme.Footer;
         data.ForeColor = Theme.TextTertiary;
         data.AutoSize = false;
-        data.SetBounds(RowX, 646, RowW, 18);
-        _content.Controls.Add(data);
+        AddFlow(data, RowW, 18, 0);
 
         Label hint = new Label();
         hint.Text = "v" + App.Version + "    锁定前请先摆好展开形态，并关闭所有资源管理器窗口";
         hint.Font = Theme.Footer;
         hint.ForeColor = Theme.TextTertiary;
         hint.AutoSize = false;
-        hint.SetBounds(RowX, 664, RowW, 18);
-        _content.Controls.Add(hint);
+        AddFlow(hint, RowW, 18, 0);
     }
 
-    private void AddSection(string text, int y)
+    /// <summary>
+    /// 纵向流式堆叠：控件按加入顺序从上往下排，间距由 gapBelow 决定。
+    /// 以后加一行只要多调一次 AddFlow，不用再算 Y 坐标。
+    /// </summary>
+    private void AddFlow(Control c, int width, int height, int gapBelow, int left = 0)
+    {
+        c.Size = new Size(width, height);
+        c.Margin = new Padding(left, 0, 0, gapBelow);
+        _flow.Controls.Add(c);
+    }
+
+    private void AddSection(string text, int gapBelow)
     {
         Label label = new Label();
         label.Text = text;
         label.Font = Theme.SectionLabel;
         label.ForeColor = Theme.TextSecondary;
         label.AutoSize = false;
-        label.SetBounds(RowX + 2, y, 200, 18);
-        _content.Controls.Add(label);
+        AddFlow(label, 200, 18, gapBelow, 2);
     }
 
     // ------------------------------------------------------------ 状态刷新
@@ -1025,6 +1181,65 @@ internal sealed class MainForm : Form
         _hibernateRow.SubText = _hibernateEnabled
             ? "当前已开启，hiberfil.sys 约占内存 40%"
             : "已关闭（快速启动也已关闭）";
+
+        ContextMenuInfo cm = ContextMenuCore.GetInfo();
+
+        UpdateCmdRow(cm);
+        UpdatePowerShellRow(cm);
+    }
+
+    /// <summary>刷新「在此处打开CMD窗口」这一行。</summary>
+    private void UpdateCmdRow(ContextMenuInfo cm)
+    {
+        _cmdOn = cm.CmdBackground;
+
+        _cmdRow.SetState(_cmdOn, true);
+
+        if (_cmdOn)
+        {
+            // 三处都在才算「全部位置」；万一被手工改过，点一下链接就能重新写齐
+            _cmdAllLocations = cm.CmdDirectory && cm.CmdDrive;
+
+            _cmdRow.SubText = _cmdAllLocations
+                ? "已开启：空白处、文件夹上、驱动器右键都能打开"
+                : "已开启：仅文件夹空白处右键时出现";
+
+            _cmdRow.SetLink(_cmdAllLocations ? "仅空白处" : "全部位置", true);
+        }
+        else
+        {
+            // 关闭状态下用上次保存的作用范围偏好
+            _cmdAllLocations = ContextMenuCore.GetScope(ShellKind.Cmd);
+
+            _cmdRow.SubText = "点击开启，在文件夹空白处右键打开 CMD";
+            _cmdRow.SetLink("", false);
+        }
+    }
+
+    /// <summary>刷新「在此处打开PowerShell窗口」这一行。</summary>
+    private void UpdatePowerShellRow(ContextMenuInfo cm)
+    {
+        _psOn = cm.PsBackground;
+
+        _psRow.SetState(_psOn, true);
+
+        if (_psOn)
+        {
+            _psAllLocations = cm.PsDirectory && cm.PsDrive;
+
+            _psRow.SubText = _psAllLocations
+                ? "已开启：空白处、文件夹上、驱动器右键都能打开"
+                : "已开启：仅文件夹空白处右键时出现";
+
+            _psRow.SetLink(_psAllLocations ? "仅空白处" : "全部位置", true);
+        }
+        else
+        {
+            _psAllLocations = ContextMenuCore.GetScope(ShellKind.PowerShell);
+
+            _psRow.SubText = "点击开启，在文件夹空白处右键打开 PowerShell";
+            _psRow.SetLink("", false);
+        }
     }
 
     // ------------------------------------------------------------ 交互
@@ -1193,6 +1408,90 @@ internal sealed class MainForm : Form
 
         ApplySystemSetting("hibernate", enable,
             enable ? "正在开启休眠，可能需要几十秒…" : "正在关闭休眠…", true);
+    }
+
+    /// <summary>注册 / 注销右键菜单里的「在此处打开CMD窗口」。</summary>
+    private void OnToggleCmd()
+    {
+        bool target = !_cmdOn;
+        string message = "";
+
+        OpResult r = RunWithProgress<OpResult>("正在更新右键菜单…", delegate
+        {
+            string m;
+            OpResult res = ContextMenuCore.SetEnabled(ShellKind.Cmd, target, _cmdAllLocations, out m);
+            message = m;
+            return res;
+        });
+
+        if (r == OpResult.Ok) ContextMenuCore.SetScope(ShellKind.Cmd, _cmdAllLocations);
+
+        RefreshState();
+        HandleResult(r, message, false);
+    }
+
+    /// <summary>切换作用范围：只空白处 / 三处都注册。</summary>
+    private void OnToggleCmdScope()
+    {
+        if (!_cmdOn) return;
+
+        bool target = !_cmdAllLocations;
+        string message = "";
+
+        OpResult r = RunWithProgress<OpResult>("正在更新右键菜单…", delegate
+        {
+            string m;
+            OpResult res = ContextMenuCore.SetEnabled(ShellKind.Cmd, true, target, out m);
+            message = m;
+            return res;
+        });
+
+        if (r == OpResult.Ok) ContextMenuCore.SetScope(ShellKind.Cmd, target);
+
+        RefreshState();
+        HandleResult(r, message, false);
+    }
+
+    /// <summary>注册 / 注销右键菜单里的「在此处打开PowerShell窗口」。</summary>
+    private void OnTogglePowerShell()
+    {
+        bool target = !_psOn;
+        string message = "";
+
+        OpResult r = RunWithProgress<OpResult>("正在更新右键菜单…", delegate
+        {
+            string m;
+            OpResult res = ContextMenuCore.SetEnabled(ShellKind.PowerShell, target, _psAllLocations, out m);
+            message = m;
+            return res;
+        });
+
+        if (r == OpResult.Ok) ContextMenuCore.SetScope(ShellKind.PowerShell, _psAllLocations);
+
+        RefreshState();
+        HandleResult(r, message, false);
+    }
+
+    /// <summary>切换 PowerShell 菜单项的作用范围。</summary>
+    private void OnTogglePowerShellScope()
+    {
+        if (!_psOn) return;
+
+        bool target = !_psAllLocations;
+        string message = "";
+
+        OpResult r = RunWithProgress<OpResult>("正在更新右键菜单…", delegate
+        {
+            string m;
+            OpResult res = ContextMenuCore.SetEnabled(ShellKind.PowerShell, true, target, out m);
+            message = m;
+            return res;
+        });
+
+        if (r == OpResult.Ok) ContextMenuCore.SetScope(ShellKind.PowerShell, target);
+
+        RefreshState();
+        HandleResult(r, message, false);
     }
 
     /// <summary>需要 HKLM 写入的操作：已提权就直接做，否则拉起提权实例。</summary>
@@ -1544,6 +1843,23 @@ internal sealed class MainForm : Form
         sb.AppendLine("  hiberfil.sys      " + (h.FileExists.HasValue
             ? (h.FileExists.Value ? "存在" : "不存在")
             : "无法确定（该文件是系统文件，可能需要管理员权限）"));
+        sb.AppendLine();
+
+        ContextMenuInfo cm = ContextMenuCore.GetInfo();
+
+        sb.AppendLine("右键菜单    HKCU\\Software\\Classes");
+        sb.AppendLine("  CMD      " + ContextMenuCore.CmdVerbName);
+        sb.AppendLine("    空白处  " + (cm.CmdBackground ? "已注册" : "未注册"));
+        sb.AppendLine("    文件夹  " + (cm.CmdDirectory ? "已注册" : "未注册"));
+        sb.AppendLine("    驱动器  " + (cm.CmdDrive ? "已注册" : "未注册"));
+        sb.AppendLine("  PowerShell  " + ContextMenuCore.PsVerbName);
+        sb.AppendLine("    程序    " + ContextMenuCore.PowerShellPath());
+        sb.AppendLine("    空白处  " + (cm.PsBackground ? "已注册" : "未注册"));
+        sb.AppendLine("    文件夹  " + (cm.PsDirectory ? "已注册" : "未注册"));
+        sb.AppendLine("    驱动器  " + (cm.PsDrive ? "已注册" : "未注册"));
+        sb.AppendLine("  作用范围  CMD=" + (ContextMenuCore.GetScope(ShellKind.Cmd) ? "全部位置" : "仅空白处")
+            + "  PowerShell=" + (ContextMenuCore.GetScope(ShellKind.PowerShell) ? "全部位置" : "仅空白处"));
+
         sb.AppendLine();
 
         sb.AppendLine("权限备份    " + (s.BackupPath.Length > 0 ? s.BackupPath : "无（尚未锁定过）"));

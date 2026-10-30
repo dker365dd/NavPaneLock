@@ -15,7 +15,7 @@ pushd "%~dp0"
     /win32manifest:app.manifest ^
     /r:System.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll ^
     /out:NavPaneLock.exe ^
-    App.cs NavPaneCore.cs PowerCore.cs ClipboardCore.cs Gui.cs
+    App.cs NavPaneCore.cs PowerCore.cs ClipboardCore.cs ContextMenuCore.cs Gui.cs
 
 set "RC=%ERRORLEVEL%"
 popd

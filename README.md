@@ -10,9 +10,12 @@
 ```
 导航窗格      锁定导航窗格（状态直接显示在副标题里）/ 展开到打开的文件夹
 系统设置      数字排序 / 剪贴板历史 / 关闭自动亮度 / 关闭休眠 / 查看详细信息
+右键菜单      在此处打开CMD窗口 / 在此处打开PowerShell窗口（各自独立开关）
 ```
 
 点整行或点开关都能切换。操作进行中会弹出等待框，窗口不会假死。
+
+「右键菜单」里的两条共用一张卡片，中间用一条细线分隔；其余每条设置各自独立成卡片。
 
 锁定状态不单独占一块卡片，直接体现在「锁定导航窗格」这一行的副标题上：
 
@@ -111,12 +114,99 @@ HKCU\Software\Microsoft\Clipboard\EnableClipboardHistory   (DWORD 1/0)
 
 开关只动休眠功能本身，**不碰睡眠/待机设置**。
 
+### 7. 在此处打开CMD窗口 / 在此处打开PowerShell窗口
+
+在资源管理器的右键菜单里加两条入口，两个**独立开关**，互不影响：
+
+| 开关 | 菜单文案 | 动词名 |
+|---|---|---|
+| 在此处打开CMD窗口 | 在此处打开CMD窗口 | `NavPaneLockCmd` |
+| 在此处打开PowerShell窗口 | 在此处打开PowerShell窗口 | `NavPaneLockPowershell` |
+
+![右键菜单](ui-cmd.png)
+
+实现方式是注册**外壳动词（shell verb）** —— 纯注册表项，不需要 COM 扩展，也不需要额外的 DLL：
+
+```
+HKCU\Software\Classes\Directory\Background\shell\NavPaneLockCmd
+    (默认)             = 在此处打开CMD窗口
+    MUIVerb            = 在此处打开CMD窗口
+    Icon               = C:\Windows\system32\cmd.exe
+    NoWorkingDirectory = (空)
+    command\(默认)     = cmd.exe /d /s /k pushd "%V"
+```
+
+两者的命令行语法完全不同，所以分开拼：
+
+| | CMD | PowerShell |
+|---|---|---|
+| 程序 | `cmd.exe` | `System32\WindowsPowerShell\v1.0\powershell.exe`（Win10/11 自带的 5.1）|
+| 保持窗口 | `/k` | `-NoExit` |
+| 进目录 | `pushd "%V"` | `-Command "Set-Location -LiteralPath '%V'"` |
+| UNC 网络路径 | ✅ pushd 自动映射临时盘符 | ✅ PowerShell 原生支持 UNC 位置 |
+| 占位符 | 空白处 `%V`，对象 `%1` | 同左 |
+
+两条命令的完整形态：
+
+```
+cmd.exe /d /s /k pushd "%V"
+"C:\Windows\system32\WindowsPowerShell\v1.0\powershell.exe" -NoExit -Command "Set-Location -LiteralPath '%V'"
+```
+
+> ⚠️ **PowerShell 不能用 `-WorkingDirectory`** —— 实测 `powershell.exe` 接受这个参数、不报错，
+> 却**不生效**（窗口还是停在原目录）。系统内置那条 `powershell.exe -noexit -WorkingDirectory "%V"`
+> 就是这么写的，所以 Windows 自带的「在此处打开 Powershell 窗口」其实也没进到目标目录。
+> 这里改用 `-Command "Set-Location -LiteralPath '...'"`，实测能正确进入。
+>
+> 路径用单引号包住：PowerShell 里单引号是字面量，不会做 `$变量` 展开。
+> 代价是路径里带单引号（`'）时会失败 —— 极少遇到。
+
+#### Win10 / Win11 通用做法
+
+两版的右键菜单机制不一样，所以注册时守住三条：
+
+| 做法 | 原因 |
+|---|---|
+| **不设 `Extended`** | 设了 Win10 要按 Shift 才出现、Win11 新菜单里直接不显示 |
+| **不设 `Show/HideBasedOnVelocityId`** | 保持 Git for Windows 的形态，两版都直接显示 |
+| **写可执行文件绝对路径** | 不依赖 PATH，32/64 位、系统装在别的盘都一致 |
+
+本机实测，内置的两条系统项策略正好相反：
+
+| 内置项 | Win10 | Win11 |
+|---|---|---|
+| `Directory\Background\shell\cmd` | `Extended` → 要按 Shift | `HideBasedOnVelocityId` → 新菜单看不见 |
+| `Directory\Background\shell\Powershell` | `Extended` → 要按 Shift | `ShowBasedOnVelocityId` → 新菜单看得见 |
+
+所以：
+
+- **CMD**：Win11 上系统那条本来就藏着，我们这条是唯一入口。
+- **PowerShell**：Win11 上系统自带一条「在此处打开 **Powershell** 窗口」（注意是小写 s），
+  开启本开关后会**并存两条**，靠文案区分。我们不覆盖系统键。
+
+#### 作用范围
+
+每个开关旁边各有一个链接，**互不影响**：「仅空白处」/「全部位置」。
+
+| 位置 | 注册表路径 | 占位符 |
+|---|---|---|
+| 文件夹空白处 | `Directory\Background\shell` | `%V`（当前所在目录） |
+| 文件夹本身 | `Directory\shell` | `%1`（被点中的文件夹） |
+| 驱动器盘符 | `Drive\shell` | `%1`（盘符根目录） |
+
+写完立刻调用 `SHChangeNotify(SHCNE_ASSOCCHANGED)`，Explorer 随即重建菜单，**不用重启资源管理器**。
+
+作用范围的偏好记在 `HKCU\Software\NavPaneLock`（`ScopeCmd` / `ScopePs`），关掉开关再打开也记得上次选的是哪一档。
+
+关闭开关 = 删掉对应 `shell` 子树，干净回退，不留残项。
+
 ## 权限
 
 | 功能 | 需要管理员 |
 |---|---|
 | 锁定 / 展开 / 剪贴板历史开关 / 查看详细信息 | 否 |
 | 数字排序 / 自适应亮度 / 休眠 / 剪贴板服务修复 | 是 |
+| 在此处打开CMD窗口 / 在此处打开PowerShell窗口 | 否（只写当前用户的 `HKCU\Software\Classes`） |
 
 系统级设置采用**按需提权**：程序平时以普通权限启动、不弹 UAC，只有拨动系统设置开关时才启动一个提权实例执行写入，写完即退。
 
@@ -155,6 +245,7 @@ build.cmd
 | `NavPaneCore.cs` | 导航窗格 / 数字排序 / 权限 |
 | `PowerCore.cs` | 自适应亮度 / 休眠 |
 | `ClipboardCore.cs` | 剪贴板历史 / 服务检测与修复 |
+| `ContextMenuCore.cs` | 右键菜单 shell verb 的注册与注销 |
 | `Gui.cs` | 界面（主题、控件、对话框） |
 
 ## 已验证
@@ -167,6 +258,16 @@ Windows 11 build 26300（.NET Framework 4.8.1）：
 - 自适应亮度：当前方案 `0 → 1 → 0`；点「同步到全部」后 4 个方案全部写入（1/4 不同步 → 4/4 一致）
 - 休眠：`1 → 0` 往返，`HibernateEnabled` 与 `hiberfil.sys`（3.4 GB）都符合预期
 - 剪贴板历史：`1 → 0 → 1` 写入与回读一致；服务修复把模板与实例从「禁用」改回「手动」并回读确认
+- 右键菜单：两个入口各自三处注册项逐值回读一致（`MUIVerb` / `Icon` / `NoWorkingDirectory` / `command`），
+  图标也跟着走（cmd.exe / powershell.exe），缩到「仅空白处」时另两处被删干净，注销后所有子树无残留
+- 两个入口互相独立：只关 PowerShell 不影响 CMD 的注册项
+- 右键菜单命令：把注册表里那条命令**原样**取出、替换 `%V` 后用 `CreateProcess` 逐字执行
+  （和 Explorer 右键时的下发方式一致）：
+  - CMD 落在 `D:\Source\NavPaneLock`，提示符显示 `D:\Source\NavPaneLock>`
+  - 路径故意填成不存在的目录时，cmd 报「The system cannot find the path specified.」
+  - PowerShell 进程保持运行（`-NoExit` 生效），路径不存在时给出 Set-Location 报错
+  - 另测过含空格、中文、括号的路径，pushd / Set-Location 均正确落点
+- 作用范围偏好持久化在 `HKCU\Software\NavPaneLock`（`ScopeCmd` / `ScopePs`），读写一致
 - 界面：浅色/深色两套主题、服务被禁用时的警示态均截图核对
 
 未覆盖：
@@ -174,4 +275,6 @@ Windows 11 build 26300（.NET Framework 4.8.1）：
 - Windows 10 实机完整回归（剪贴板历史的值名与路径在 1809+ 与 Win11 一致，未实机验证）
 - 无环境光传感器的机器上自适应亮度的实际视觉效果
 - 标准账户下的 UAC 提权流程
+- **右键菜单的实际观感**：注册项、命令行为都已验证，但没有在 Explorer 里真的右键点过那两条菜单项 —— 需要人工确认一下它们落在新版菜单的哪个位置
+- **Windows 10 实机**：注册项的写法（不设 `Extended`、不设 velocity id）是按两版通用原则设计的，但只在 Win11 上实机验证过，Win10 上没验过
 - **Win+V 的实际行为**：本机镜像把 `cbdhsvc` 模板禁用了，且 `USER_SHARE_PROCESS` 无法手动启动（错误 1058），需要注销重登才能验证 —— 因此「关闭后历史是否被清空」这一点也未实测，界面上的确认文案只描述「不再显示历史」这一确定效果

@@ -8,7 +8,7 @@ using System.Windows.Forms;
 internal static class App
 {
     public const string Title = "系统设置小工具";
-    public const string Version = "1.4.0";
+    public const string Version = "1.6.0";
 
     public const string ResultFileName = "last-elevated.txt";
 

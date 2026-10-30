@@ -1,0 +1,20 @@
+# 构建产物
+*.exe
+*.pdb
+*.dll
+
+# 编译中间文件
+*.obj
+*.ilk
+*.exp
+*.lib
+*.res
+
+# 编辑器 / 系统
+.vs/
+.vscode/
+Thumbs.db
+desktop.ini
+
+# 工具缓存
+*.log

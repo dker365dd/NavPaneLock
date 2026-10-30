@@ -1043,7 +1043,8 @@ internal static class NavPaneCore
         return Environment.OSVersion.VersionString;
     }
 
-    private static void Log(string action, string detail, OpResult result)
+    /// <summary>写入操作日志。供其它模块（剪贴板、右键菜单等）复用。</summary>
+    internal static void Log(string action, string detail, OpResult result)
     {
         try
         {
